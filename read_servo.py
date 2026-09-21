@@ -7,3 +7,5 @@ with serial.Serial("COM7", 1_000_000, timeout=0.2) as ser:
 
 position = (reply[5] << 8) | reply[6] # 大端格式，高八位左移 8 位（相当于乘 256）再拼接低八位
 print("当前位置：", position)
+
+ 

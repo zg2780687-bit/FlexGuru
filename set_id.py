@@ -3,7 +3,7 @@ import serial
 
 PORT = "COM7"
 OLD_ID = 1
-NEW_ID = 1
+NEW_ID = 6
 
 def write_command(servo_id, address, value):
     body = [servo_id, 4, 3, address, value]
