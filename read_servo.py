@@ -94,6 +94,7 @@ def read_position(ser, servo_id):
     # reply[6] = 低 8 位
     # =========================
 
+
     position = (
         (reply[5] << 8)
         | reply[6]

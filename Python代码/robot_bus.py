@@ -11,7 +11,7 @@ from config import JOINTS, PORT, READ_RETRIES, READ_RETRY_DELAY_S
 
 def create_bus():
     motors = {
-        name: Motor(servo_id, "scs215", MotorNormMode.RANGE_M100_100)
+        name: Motor(servo_id, "scs_series", MotorNormMode.RANGE_M100_100)
         for name, servo_id in JOINTS.items()
     }
     return FeetechMotorsBus(

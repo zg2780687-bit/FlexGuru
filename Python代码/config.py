@@ -1,6 +1,6 @@
 """Hardware and joint configuration for the six-axis SCS215 arm."""
 
-PORT = "COM5"
+PORT = "COM7"
 BAUDRATE = 1_000_000
 CALIBRATION_FILE = "calibration.json"
 

@@ -1,78 +1,170 @@
 """Calibration math for the 10-bit SCS215 position register.
 
-The sensor value can wrap while a joint is moved by hand, but the SCS215 goal
-position controller must not be commanded across the 1023/0 boundary.  A
-wrapped measured arc is therefore trimmed to the larger non-wrapping segment.
+SCS215 position values are 0~1023 and wrap around at 1023 -> 0.
+
+The physical movement of a joint can cross this numerical boundary.
+Therefore calibration keeps an "unwrapped" continuous coordinate internally.
+Only when sending a target to the servo do we convert it back to 0~1023.
 """
 
 POSITION_MODULUS = 1024
-WRAP_SAFETY_MARGIN = 15
+STARTUP_TOLERANCE = 20
 
+GRIPPER_ID = 6
+
+# 6号夹爪禁止进入这个 RAW 区间
+GRIPPER_FORBIDDEN_MIN = 140
+GRIPPER_FORBIDDEN_MAX = 800
+
+def is_gripper_raw_forbidden(raw):
+    """检查6号夹爪 RAW 是否进入危险禁区。"""
+    return (
+        GRIPPER_FORBIDDEN_MIN
+        <= raw
+        <= GRIPPER_FORBIDDEN_MAX
+    )
 
 def circular_distance(a, b):
+    """Shortest circular distance between two raw positions."""
     difference = abs(a - b) % POSITION_MODULUS
     return min(difference, POSITION_MODULUS - difference)
 
 
 def choose_calibration_delta(raw_at_0, raw_at_mid, raw_at_1):
-    """Choose the physical arc from endpoint 0 to endpoint 1 via midpoint.
+    """Determine the signed physical arc from input 0 to input 1.
 
-    There are two possible arcs between any two 10-bit positions. Recording a
-    physical midpoint tells us whether the intended path crosses 1023 -> 0.
+    The midpoint tells us which of the two possible circular paths
+    represents the actual physical movement.
     """
     direct = raw_at_1 - raw_at_0
-    candidates = [direct]
-    if direct >= 0:
-        candidates.append(direct - POSITION_MODULUS)
-    else:
-        candidates.append(direct + POSITION_MODULUS)
+
+    candidates = [
+        direct,
+        direct - POSITION_MODULUS,
+        direct + POSITION_MODULUS,
+    ]
 
     def midpoint_error(delta):
-        predicted = (raw_at_0 + delta / 2.0) % POSITION_MODULUS
+        predicted = (
+            raw_at_0 + delta / 2.0
+        ) % POSITION_MODULUS
         return circular_distance(predicted, raw_at_mid)
 
-    return min(candidates, key=midpoint_error)
+    return int(min(candidates, key=midpoint_error))
 
 
-def choose_safe_control_segment(raw_at_0, raw_delta, margin=WRAP_SAFETY_MARGIN):
-    """Return the largest part of an arc that never crosses 1023/0.
+def unwrap_from_start(raw, raw_at_0, raw_delta):
+    """Represent a raw position on the same continuous coordinate system.
 
-    The returned tuple is ``(safe_raw_at_0, safe_raw_at_1, was_trimmed)``.
-    Direction is preserved.  ``margin`` keeps commanded positions away from
-    the discontinuity itself.
+    Example:
+        raw_at_0 = 1022
+        raw = 128
+
+    For a positive calibrated direction this becomes 1152.
     """
-    unwrapped_end = raw_at_0 + raw_delta
-    if 0 <= unwrapped_end <= POSITION_MODULUS - 1:
-        return raw_at_0, unwrapped_end, False
+    candidates = [
+        raw + k * POSITION_MODULUS
+        for k in range(-2, 3)
+    ]
 
     if raw_delta > 0:
-        wrapped_end = unwrapped_end - POSITION_MODULUS
-        candidates = [
-            (raw_at_0, POSITION_MODULUS - 1 - margin),
-            (margin, wrapped_end),
-        ]
-    else:
-        wrapped_end = unwrapped_end + POSITION_MODULUS
-        candidates = [
-            (raw_at_0, margin),
-            (POSITION_MODULUS - 1 - margin, wrapped_end),
-        ]
+        return min(
+            candidates,
+            key=lambda value: abs(value - raw_at_0)
+        )
 
-    valid = [(start, end) for start, end in candidates if abs(end - start) >= 20]
-    if not valid:
-        raise ValueError("跨零点后没有足够大的安全控制区间")
-    start, end = max(valid, key=lambda pair: abs(pair[1] - pair[0]))
-    return int(start), int(end), True
+    return min(
+        candidates,
+        key=lambda value: abs(value - raw_at_0)
+    )
+
+
+def ratio_to_unwrapped(ratio, item):
+    """Convert 0~1 ratio to the continuous calibrated coordinate."""
+    if not 0.0 <= ratio <= 1.0:
+        raise ValueError("ratio 必须位于 0~1")
+
+    return (
+        item["raw_at_0"]
+        + ratio * item["raw_delta"]
+    )
+
+
+def unwrapped_to_raw(unwrapped):
+    """Convert continuous coordinate back to SCS215 raw 0~1023."""
+    return int(round(unwrapped)) % POSITION_MODULUS
 
 
 def ratio_to_raw(ratio, item):
-    raw = round(item["raw_at_0"] + ratio * item["raw_delta"])
-    if not 0 <= raw < POSITION_MODULUS:
-        raise ValueError(f"目标原始位置越界：{raw}")
-    return raw
+    """Convert calibrated 0~1 ratio to actual SCS215 raw position."""
+    unwrapped = ratio_to_unwrapped(ratio, item)
+    return unwrapped_to_raw(unwrapped)
 
 
 def raw_to_ratio(raw, item):
-    """Convert a raw value using a non-wrapping calibrated interval."""
-    return (raw - item["raw_at_0"]) / item["raw_delta"]
+    """Convert an actual raw position to calibrated 0~1.
 
+    The raw value is first unwrapped relative to the calibrated start.
+    """
+    raw_at_0 = item["raw_at_0"]
+    raw_delta = item["raw_delta"]
+
+    if raw_delta == 0:
+        raise ValueError("校准跨度不能为 0")
+
+    # Find the representation of raw that is closest to the
+    # calibrated interval.
+    candidates = [
+        raw + k * POSITION_MODULUS
+        for k in range(-2, 3)
+    ]
+
+    interval_end = raw_at_0 + raw_delta
+
+    lower = min(raw_at_0, interval_end)
+    upper = max(raw_at_0, interval_end)
+
+    inside = [
+        value
+        for value in candidates
+        if lower - STARTUP_TOLERANCE
+        <= value
+        <= upper + STARTUP_TOLERANCE
+    ]
+
+    if inside:
+        unwrapped = min(
+            inside,
+            key=lambda value: abs(value - raw_at_0)
+        )
+    else:
+        unwrapped = min(
+            candidates,
+            key=lambda value: abs(
+                value - interval_end
+            )
+        )
+
+    return (
+        unwrapped - raw_at_0
+    ) / raw_delta
+
+
+def movement_crosses_wrap(start_raw, target_raw):
+    """Return whether the direct numerical movement crosses 1023/0."""
+    return abs(target_raw - start_raw) > POSITION_MODULUS / 2
+
+
+def get_safe_intermediate(start_raw, target_raw):
+    """Return a safe intermediate target when crossing 1023/0.
+
+    The intermediate position stays 15 counts away from the numerical
+    discontinuity.
+    """
+    if start_raw > 1008 and target_raw < 15:
+        return 1008
+
+    if start_raw < 15 and target_raw > 1008:
+        return 15
+
+    return None
