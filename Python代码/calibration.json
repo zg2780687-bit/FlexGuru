@@ -1,0 +1,91 @@
+{
+  "port": "COM5",
+  "model": "SCS215",
+  "created_at": "2026-09-28T09:18:05",
+  "joints": {
+    "shoulder_pan": {
+      "id": 1,
+      "label": "底座旋转",
+      "raw_at_0": 900,
+      "raw_at_mid": 574,
+      "raw_at_1": 247,
+      "raw_delta": -653,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 900,
+      "measured_raw_at_mid": 570,
+      "measured_raw_at_1": 247,
+      "measured_raw_delta": -653,
+      "trimmed_at_wrap": false
+    },
+    "shoulder_lift": {
+      "id": 2,
+      "label": "肩关节",
+      "raw_at_0": 15,
+      "raw_at_mid": 267,
+      "raw_at_1": 519,
+      "raw_delta": 504,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 980,
+      "measured_raw_at_mid": 220,
+      "measured_raw_at_1": 519,
+      "measured_raw_delta": 563,
+      "trimmed_at_wrap": true
+    },
+    "elbow_flex": {
+      "id": 3,
+      "label": "肘关节",
+      "raw_at_0": 15,
+      "raw_at_mid": 146,
+      "raw_at_1": 278,
+      "raw_delta": 263,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 819,
+      "measured_raw_at_mid": 14,
+      "measured_raw_at_1": 278,
+      "measured_raw_delta": 483,
+      "trimmed_at_wrap": true
+    },
+    "wrist_flex": {
+      "id": 4,
+      "label": "手腕俯仰",
+      "raw_at_0": 1008,
+      "raw_at_mid": 864,
+      "raw_at_1": 721,
+      "raw_delta": -287,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 179,
+      "measured_raw_at_mid": 1008,
+      "measured_raw_at_1": 721,
+      "measured_raw_delta": -482,
+      "trimmed_at_wrap": true
+    },
+    "wrist_roll": {
+      "id": 5,
+      "label": "手腕旋转",
+      "raw_at_0": 669,
+      "raw_at_mid": 838,
+      "raw_at_1": 1008,
+      "raw_delta": 339,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 669,
+      "measured_raw_at_mid": 970,
+      "measured_raw_at_1": 238,
+      "measured_raw_delta": 593,
+      "trimmed_at_wrap": true
+    },
+    "gripper": {
+      "id": 6,
+      "label": "夹爪",
+      "raw_at_0": 15,
+      "raw_at_mid": 120,
+      "raw_at_1": 224,
+      "raw_delta": 209,
+      "crosses_wrap": false,
+      "measured_raw_at_0": 955,
+      "measured_raw_at_mid": 999,
+      "measured_raw_at_1": 224,
+      "measured_raw_delta": 293,
+      "trimmed_at_wrap": true
+    }
+  }
+}
