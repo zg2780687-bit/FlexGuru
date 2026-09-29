@@ -17,14 +17,14 @@
         "shoulder_lift": {
             "id": 2,
             "label": "肩关节",
-            "raw_at_0": 0,
-            "raw_at_mid": 140,
-            "raw_at_1": 281,
-            "unwrapped_at_0": 0,
-            "unwrapped_at_mid": 140,
-            "unwrapped_at_1": 281,
-            "safe_raw_min": 0,
-            "safe_raw_max": 281
+            "raw_at_0": 197,
+            "raw_at_mid": 420,
+            "raw_at_1": 653,
+            "unwrapped_at_0": 197,
+            "unwrapped_at_mid": 420,
+            "unwrapped_at_1": 653,
+            "safe_raw_min": 197,
+            "safe_raw_max": 700
         },
         "elbow_flex": {
             "id": 3,
