@@ -1,0 +1,11 @@
+{
+    "name": "wave",
+    "steps": [
+        { "pose": "lift",  "duration": 1000 },
+        { "pose": "left",  "duration": 800  },
+        { "pose": "right", "duration": 800  },
+        { "pose": "left",  "duration": 800  },
+        { "pose": "lift",  "duration": 800  },
+        { "pose": "curl",  "duration": 1000 }
+    ]
+}
