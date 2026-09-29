@@ -29,22 +29,22 @@
         "elbow_flex": {
             "id": 3,
             "label": "肘关节",
-            "raw_at_0": 278,
-            "raw_at_mid": 25,
-            "raw_at_1": 847,
-            "unwrapped_at_0": 278,
-            "unwrapped_at_mid": 25,
-            "unwrapped_at_1": -177
+            "raw_at_0": 843,
+            "raw_at_mid": 515,
+            "raw_at_1": 285,
+            "unwrapped_at_0": 843,
+            "unwrapped_at_mid": 515,
+            "unwrapped_at_1": 285
         },
         "wrist_flex": {
             "id": 4,
             "label": "手腕俯仰",
-            "raw_at_0": 688,
-            "raw_at_mid": 872,
-            "raw_at_1": 31,
-            "unwrapped_at_0": 688,
-            "unwrapped_at_mid": 872,
-            "unwrapped_at_1": 1055
+            "raw_at_0": 179,
+            "raw_at_mid": 439,
+            "raw_at_1": 699,
+            "unwrapped_at_0": 179,
+            "unwrapped_at_mid": 439,
+            "unwrapped_at_1": 699
         },
         "wrist_roll": {
             "id": 5,
@@ -59,13 +59,13 @@
         "gripper": {
             "id": 6,
             "label": "夹爪",
-            "raw_at_0": 0,
-            "raw_at_mid": 69,
-            "raw_at_1": 139,
-            "unwrapped_at_0": 0,
-            "unwrapped_at_mid": 69,
-            "unwrapped_at_1": 139,
-            "safe_raw_max": 139
+            "raw_at_0": 119,
+            "raw_at_mid": 258,
+            "raw_at_1": 400,
+            "unwrapped_at_0": 119,
+            "unwrapped_at_mid": 258,
+            "unwrapped_at_1": 400,
+            "safe_raw_max": 405
         }
     }
 }
