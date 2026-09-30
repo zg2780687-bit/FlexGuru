@@ -1,215 +1,230 @@
 """
-SO-ARM 101 尖端（笛卡尔）控制
+SO-ARM101 尖端键盘控制
 
-用键盘操纵夹爪尖端走直线。
+键盘
+ -> 尖端 XYZ 位移
+ -> 直线轨迹
+ -> IK
+ -> 5个关节角
+ -> RAW
+ -> 舵机
 
-按键：
-    w / s   →  +x / -x   （前 / 后）
-    a / d   →  +y / -y   （左 / 右）
-    q / e   →  +z / -z   （上 / 下）
-    o       →  切换肘部 up / down
-    p       →  打印当前位置
-    [ / ]   →  步长减半 / 加倍
-    h       →  帮助
-    x       →  退出
-
-如果 IK 无解：程序自动缩小步长，保留原方向直到
-找到最近的有解位置；实在不行才放弃并提示。
+6号夹爪保持当前 RAW。
+IK 无解时停在最后一个有解的位置。
 """
 
-import os
 import time
+from pathlib import Path
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(SCRIPT_DIR)
+import numpy as np
 
-import serial
-import control_robot
-import so_arm_kinematics as kin
+from config import CALIBRATION_FILE, JOINTS, JOINT_SPEEDS
+from robot_bus import (
+    create_bus,
+    close_bus,
+    read_all_raw,
+    set_torque,
+)
 
-
-# ============================================================
-# 可调参数
-# ============================================================
-
-STEP_MM = 20.0          # 默认步长 2cm
-MIN_STEP_MM = 2.0       # 最小步长
-MAX_STEP_MM = 100.0
-STEP_SCALE = 0.5        # 每次 IK 失败缩小的比例
-MOVE_MS = 400           # 每步运动时长
+from so_arm_kinematics import SOArmKinematics
 
 
-# ============================================================
-# 工具
-# ============================================================
-
-def raw_to_ratio(raw, item):
-    """和 save_pose.py 一致的反向映射。"""
-    p0 = float(item["unwrapped_at_0"])
-    pm = float(item["unwrapped_at_mid"])
-    p1 = float(item["unwrapped_at_1"])
-
-    if item["id"] == 5:
-        return (raw - p0) / (p1 - p0)
-
-    low0, high0 = sorted((p0, pm))
-    low1, high1 = sorted((pm, p1))
-    if low0 <= raw <= high0:
-        ratio = 0.5 * (raw - p0) / (pm - p0)
-    elif low1 <= raw <= high1:
-        ratio = 0.5 + 0.5 * (raw - pm) / (p1 - pm)
-    else:
-        ratio = (raw - p0) / (p1 - p0)
-    return max(0.0, min(1.0, ratio))
+STEP_SIZE = 0.005          # 每次按键移动 5 mm
+TRAJECTORY_STEPS = 10      # 一次移动拆成 10 个点
+TRAJECTORY_DELAY = 0.05    # 每个点之间等待 50 ms
 
 
-def read_ratios(ser, calibration):
-    out = []
-    for name, sid in control_robot.JOINTS.items():
-        raw = control_robot.read_position(ser, sid)
-        out.append(raw_to_ratio(raw, calibration["joints"][name]))
-    return out
+KEY_DIRECTION = {
+    "w": np.array([+1.0, 0.0, 0.0]),  # 前
+    "s": np.array([-1.0, 0.0, 0.0]),  # 后
+    "a": np.array([0.0, +1.0, 0.0]),  # 左
+    "d": np.array([0.0, -1.0, 0.0]),  # 右
+    "r": np.array([0.0, 0.0, +1.0]),  # 上
+    "f": np.array([0.0, 0.0, -1.0]),  # 下
+}
 
 
-def send_ratios(ser, ratios, duration_ms):
-    calibration = control_robot.load_calibration()
-    targets = control_robot.calculate_targets(ratios, calibration)
-
-    for name, sid in control_robot.JOINTS.items():
-        control_robot.set_torque(ser, sid, True)
-    time.sleep(0.05)
-
-    for name, sid in control_robot.JOINTS.items():
-        control_robot.move_servo(ser, sid, targets[name], duration_ms)
-
-
-def show(xyz, ratios):
-    print(f"  比例: {' '.join(f'{r:.3f}' for r in ratios)}")
-    print(f"  尖端 (mm): x={xyz[0]*1000:+7.1f}  "
-          f"y={xyz[1]*1000:+7.1f}  z={xyz[2]*1000:+7.1f}")
-
-
-# ============================================================
-# 主流程
-# ============================================================
-
-def main():
-    print("=" * 60)
-    print("SO-ARM 101 尖端控制")
-    print("=" * 60)
-
-    calibration = control_robot.load_calibration()
-    ser = serial.Serial(
-        control_robot.PORT, control_robot.BAUDRATE,
-        timeout=control_robot.TIMEOUT,
+def send_joint_target(bus, target_raw):
+    """发送5个关节目标，夹爪也会带着当前 RAW 一起发送。"""
+    bus.sync_write(
+        "Goal_Velocity",
+        JOINT_SPEEDS,
+        normalize=False,
     )
 
+    bus.sync_write(
+        "Goal_Position",
+        target_raw,
+        normalize=False,
+    )
+
+
+def print_raw(raw):
+    print("\n当前 RAW：")
+    for joint in JOINTS:
+        print(f"  {joint:<16} {raw[joint]}")
+
+
+def print_angles(angles):
+    print("\n当前关节角：")
+    for joint, angle in angles.items():
+        print(f"  {joint:<16} {angle:7.2f}°")
+
+
+def print_position(pose):
+    p = pose[:3, 3]
+    print(
+        f"\n当前尖端位置："
+        f" X={p[0]:.4f} m"
+        f"  Y={p[1]:.4f} m"
+        f"  Z={p[2]:.4f} m"
+    )
+
+
+def move_cartesian(bus, kin, current_raw, current_pose, delta):
+    """
+    沿一条直线移动一次。
+
+    如果某个轨迹点 IK 无解：
+    立即停止，并返回最后一个成功的位置。
+    下一次按键从这个位置继续。
+    """
+    last_raw = dict(current_raw)
+    last_pose = current_pose.copy()
+
+    for step in range(1, TRAJECTORY_STEPS + 1):
+
+        target_pose = kin.interpolate_pose(
+            current_pose,
+            delta,
+            step,
+            TRAJECTORY_STEPS,
+        )
+
+        current_angles = kin.raw_to_joint_angles(last_raw)
+
+        solution = kin.inverse(
+            current_angles,
+            target_pose,
+        )
+
+        if solution is None:
+            print(
+                f"\nIK 无解：第 {step}/{TRAJECTORY_STEPS} 个轨迹点"
+            )
+            print("停止在最后一个有解的位置。")
+            return last_raw, last_pose
+
+        target_raw = kin.joint_angles_to_raw(
+            solution,
+            last_raw,
+        )
+
+        if not kin.check_raw_safe(target_raw):
+            print("\n目标 RAW 超出安全标定范围。")
+            print("停止在最后一个有解的位置。")
+            return last_raw, last_pose
+
+        send_joint_target(bus, target_raw)
+
+        last_raw = target_raw
+        last_pose = target_pose
+
+        progress = delta * step / TRAJECTORY_STEPS * 1000
+        print(
+            f"  轨迹点 {step}/{TRAJECTORY_STEPS}"
+            f"  ΔXYZ = {progress} mm"
+        )
+
+        time.sleep(TRAJECTORY_DELAY)
+
+    return last_raw, last_pose
+
+
+def main():
+
+    print("========================================")
+    print("        SO-ARM101 尖端键盘控制")
+    print("========================================")
+    print("W → 前    S → 后")
+    print("A → 左    D → 右")
+    print("R → 上    F → 下")
+    print("Q → 退出")
+    print(f"每次移动：{STEP_SIZE * 1000:.0f} mm")
+    print("========================================")
+
+    # calibration.json 在 Python代码目录中
+    calibration_path = Path(CALIBRATION_FILE)
+
+    kin = SOArmKinematics(
+        calibration_path=calibration_path
+    )
+
+    print(f"\nURDF：{kin.urdf_path}")
+    print("FK / IK / RAW转换已加载。")
+
+    bus = create_bus()
+    torque_enabled = False
+
     try:
-        if not control_robot.check_servo2_safe_position(ser, calibration):
-            return
-        if not control_robot.check_servo5_safe_position(ser, calibration):
-            return
-        if not control_robot.check_servo6_safe_position(ser, calibration):
+        bus.connect(handshake=False)
+
+        current_raw = read_all_raw(bus)
+        print_raw(current_raw)
+
+        if not kin.check_raw_safe(current_raw):
+            print("\n当前位置已经超出标定安全范围。")
             return
 
-        print("\n读取当前比例……")
-        current = read_ratios(ser, calibration)
-        q2_0 = kin.ratio_to_angle("shoulder_lift", current[1])
-        q3_0 = kin.ratio_to_angle("elbow_flex",    current[2])
-        q4_0 = kin.ratio_to_angle("wrist_flex",    current[3])
-        WRIST_TARGET = q2_0 + q3_0 + q4_0
-        print(f"夹爪朝向锁定：{WRIST_TARGET:.3f} rad")
-        xyz = kin.ratios_to_xyz(*current[:3])
-        show(xyz, current)
+        current_angles = kin.raw_to_joint_angles(current_raw)
+        print_angles(current_angles)
 
-        
-        step_mm = STEP_MM
+        current_pose = kin.forward(current_angles)
+        print_position(current_pose)
 
-        print("\n按键: w/s=±x  a/d=±y  q/e=±z  "
-              "o=肘部切换  p=位置  [/]=步长  h=帮助  x=退出")
+        failures = set_torque(bus, True)
+
+        if failures:
+            print("\n舵机上力失败。")
+            return
+
+        torque_enabled = True
+        print("\n进入尖端控制模式。")
 
         while True:
-            key = input("\n> ").strip().lower()
 
-            if key == "x":
+            key = input(
+                "\n请输入 W/A/S/D/R/F/Q："
+            ).strip().lower()
+
+            if key == "q":
+                print("\n退出尖端控制。")
                 break
-            if key == "h":
-                print("w/s ±x   a/d ±y   q/e ±z   o 肘部  p 位置  [/] 步长  x 退出")
-                continue
-            if key == "p":
-                xyz = kin.ratios_to_xyz(*current[:3])
-                show(xyz, current)
-                continue
-            if key == "[":
-                step_mm = max(MIN_STEP_MM, step_mm / 2)
-                print(f"步长 = {step_mm:.1f} mm")
-                continue
-            if key == "]":
-                step_mm = min(MAX_STEP_MM, step_mm * 2)
-                print(f"步长 = {step_mm:.1f} mm")
+
+            if key not in KEY_DIRECTION:
+                print("无效按键。")
                 continue
 
-            direction = None
-            if key == "w":   direction = ( 1,  0,  0)
-            elif key == "s": direction = (-1,  0,  0)
-            elif key == "a": direction = ( 0,  1,  0)
-            elif key == "d": direction = ( 0, -1,  0)
-            elif key == "q": direction = ( 0,  0,  1)
-            elif key == "e": direction = ( 0,  0, -1)
+            delta = KEY_DIRECTION[key] * STEP_SIZE
 
-            if direction is None:
-                print("未知按键。按 h 查看帮助。")
-                continue
+            current_raw, current_pose = move_cartesian(
+                bus=bus,
+                kin=kin,
+                current_raw=current_raw,
+                current_pose=current_pose,
+                delta=delta,
+            )
 
-            xyz = kin.ratios_to_xyz(*current[:3])
-
-            # 试不同步长，从大到小
-            scale = 1.0
-            new3 = None
-            while scale * step_mm >= MIN_STEP_MM:
-                dx = direction[0] * scale * step_mm / 1000.0
-                dy = direction[1] * scale * step_mm / 1000.0
-                dz = direction[2] * scale * step_mm / 1000.0
-                target = (xyz[0] + dx, xyz[1] + dy, xyz[2] + dz)
-
-                print(f"  Δ目标 = ({dx*1000:+.1f}, {dy*1000:+.1f}, {dz*1000:+.1f}) mm")
-                new3 = kin.xyz_to_ratios(*target, current_ratios=current[:3])
-                if new3 is not None:
-                    break
-                scale *= STEP_SCALE
-
-            if new3 is None:
-                print("❌ 该方向完全无解，原地不动。")
-                continue
-
-            moved_mm = scale * step_mm
-            q2_new = kin.ratio_to_angle("shoulder_lift", new3[1])
-            q3_new = kin.ratio_to_angle("elbow_flex",    new3[2])
-
-            r4 = kin.solve_wrist_flex(q2_new, q3_new, WRIST_TARGET)
-            new_ratios = [new3[0], new3[1], new3[2], r4, current[4], current[5]]
-            print(f"移动 {moved_mm:.1f} mm …")
-
-            send_ratios(ser, new_ratios, MOVE_MS)
-            time.sleep(MOVE_MS / 1000 + 0.1)
-
-            # 从实机重新读，避免漂移
-            current = read_ratios(ser, calibration)
-            xyz = kin.ratios_to_xyz(*current[:3])
-            show(xyz, current)
+            print_position(current_pose)
 
     except KeyboardInterrupt:
-        print("\nCtrl+C 退出。")
+        print("\n收到 Ctrl+C，退出。")
 
     finally:
-        print("\n卸力……")
-        try:
-            for name, sid in control_robot.JOINTS.items():
-                control_robot.set_torque(ser, sid, False)
-        except Exception:
-            pass
-        ser.close()
-        print("串口已关闭。")
+        close_bus(
+            bus,
+            disable_torque=torque_enabled,
+        )
 
 
 if __name__ == "__main__":
